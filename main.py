@@ -15,7 +15,6 @@ def home():
     return "🤖 Bot Roblox Vip Server đang hoạt động 24/7!"
 
 def run_flask():
-    # Render sẽ tự cấp cổng qua biến môi trường PORT (mặc định 8080)
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
@@ -29,14 +28,13 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="hx!", intents=intents, help_command=None)
 
-# Lưu trữ dữ liệu bộ nhớ tạm (Có thể nâng cấp sang Database nếu muốn lưu lâu dài)
-# Structure: { guild_id: "global" | "vng" }
+# Lưu trữ cấu hình Server: { guild_id: {"region": "global" | "vng", "game": "Tên Game"} }
 guild_settings = {}
 
-# Structure: { user_id: ["acc1", "acc2"] }
+# Lưu danh sách tài khoản/ghi chú của người dùng: { user_id: ["Acc 1", "Acc 2"] }
 user_accounts = {}
 
-# Structure: { user_id: [{"name": "server_name", "link": "http://..."}, ...] }
+# Lưu danh sách Server VIP: { user_id: [{"name": "server_name", "game": "game_name", "link": "http://..."}, ...] }
 user_servers = {}
 
 @bot.event
@@ -44,7 +42,7 @@ async def on_ready():
     print(f"✨ Bot đã đăng nhập thành công dưới tên: {bot.user}")
 
 # ------------------------------------------------------------------
-# 3. NHÓM LỆNH MỚI VÀO SERVER: hx!setup
+# 3. NHÓM CẤU HÌNH SERVER: hx!setup & hx!game
 # ------------------------------------------------------------------
 class SetupSelect(discord.ui.Select):
     def __init__(self):
@@ -65,8 +63,13 @@ class SetupSelect(discord.ui.Select):
         super().__init__(placeholder="👉 Chọn phiên bản Roblox mặc định...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        guild_id = interaction.guild_id
         region = self.values[0]
-        guild_settings[interaction.guild_id] = region
+
+        if guild_id not in guild_settings:
+            guild_settings[guild_id] = {}
+        
+        guild_settings[guild_id]["region"] = region
         region_name = "🌐 Roblox Global (Quốc tế)" if region == "global" else "🇻🇳 Roblox VNG"
         
         embed = discord.Embed(
@@ -91,13 +94,39 @@ async def setup_command(ctx):
     )
     await ctx.send(embed=embed, view=SetupView())
 
+@bot.command(name="game")
+async def game_command(ctx, *, game_name: str = None):
+    """Cấu hình game Roblox muốn tạo Server VIP"""
+    guild_id = ctx.guild.id
+
+    if not game_name:
+        embed = discord.Embed(
+            title="⚠️ Thiếu Tên Game",
+            description="Vui lòng nhập tên game bạn muốn chọn theo cú pháp: `hx!game <tên_game>`\n*Ví dụ:* `hx!game steal an egg`",
+            color=discord.Color.orange()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    if guild_id not in guild_settings:
+        guild_settings[guild_id] = {}
+
+    guild_settings[guild_id]["game"] = game_name
+
+    embed = discord.Embed(
+        title="🎮 Đã Chọn Game Roblox!",
+        description=f"Server hiện tại đã chọn game **{game_name}** để tạo Server VIP.",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed)
+
 # ------------------------------------------------------------------
 # 4. NHÓM ACCOUNT: hx!account_create, hx!account_delete
 # ------------------------------------------------------------------
-class AccountCreateModal(discord.ui.Modal, title="👤 Tạo Tài Khoản Roblox"):
+class AccountCreateModal(discord.ui.Modal, title="👤 Tạo Tài Khoản / Ghi Chú"):
     acc_name = discord.ui.TextInput(
         label="Tên tài khoản là gì?",
-        placeholder="Nhập tên tài khoản Roblox của bạn tại đây...",
+        placeholder="Nhập tên tài khoản hoặc ghi chú của bạn...",
         required=True,
         max_length=50
     )
@@ -121,15 +150,14 @@ class AccountCreateModal(discord.ui.Modal, title="👤 Tạo Tài Khoản Roblox
         user_accounts[user_id].append(account_input)
         embed = discord.Embed(
             title="✅ Tạo tài khoản thành công!",
-            description=f"Đã thêm tài khoản **{account_input}** vào hồ sơ của bạn thành công.",
+            description=f"Đã lưu tài khoản **{account_input}** vào danh sách của bạn.",
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.command(name="account_create")
 async def account_create_command(ctx):
-    """Mở Modal nhập tên tài khoản"""
-    # Vì Modal chỉ gửi được qua Interaction, dùng giao diện nút bấm để gọi Modal
+    """Mở Modal nhập tên tài khoản/ghi chú"""
     class OpenModalView(discord.ui.View):
         @discord.ui.button(label="➕ Bấm vào đây để nhập tên tài khoản", style=discord.ButtonStyle.primary, emoji="📝")
         async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -137,7 +165,7 @@ async def account_create_command(ctx):
 
     embed = discord.Embed(
         title="👤 Tạo Tài Khoản Mới",
-        description="Nhấn vào nút bên dưới để mở ô nhập tên tài khoản Roblox của bạn.",
+        description="Nhấn vào nút bên dưới để mở ô nhập tên tài khoản.",
         color=discord.Color.gold()
     )
     await ctx.send(embed=embed, view=OpenModalView())
@@ -187,17 +215,27 @@ async def server_create_command(ctx, server_name: str = None):
     guild_id = ctx.guild.id
     user_id = ctx.author.id
 
-    # Kiểm tra xem Server đã setup chưa
-    if guild_id not in guild_settings:
+    # 1. Kiểm tra hx!setup
+    if guild_id not in guild_settings or "region" not in guild_settings[guild_id]:
         embed = discord.Embed(
-            title="🚫 Chưa Cấu Hình Server",
-            description="Máy chủ này chưa được thiết lập! Vui lòng dùng lệnh `hx!setup` trước.",
+            title="🚫 Chưa Cấu Hình Vùng Roblox",
+            description="Máy chủ này chưa được chọn phiên bản Roblox! Vui lòng dùng lệnh `hx!setup` trước.",
             color=discord.Color.red()
         )
         await ctx.send(embed=embed)
         return
 
-    # Bắt buộc có ít nhất 1 account
+    # 2. Kiểm tra hx!game
+    if "game" not in guild_settings[guild_id]:
+        embed = discord.Embed(
+            title="🚫 Chưa Chọn Game Roblox",
+            description="Server này chưa được chọn game Roblox! Vui lòng dùng lệnh `hx!game <tên_game>` trước (Ví dụ: `hx!game steal an egg`).",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+        return
+
+    # 3. Bắt buộc có ít nhất 1 account đã lưu
     accounts = user_accounts.get(user_id, [])
     if not accounts:
         embed = discord.Embed(
@@ -208,6 +246,7 @@ async def server_create_command(ctx, server_name: str = None):
         await ctx.send(embed=embed)
         return
 
+    # 4. Kiểm tra xem có nhập tên server VIP không
     if not server_name:
         embed = discord.Embed(
             title="⚠️ Thiếu Tên Server VIP",
@@ -217,25 +256,26 @@ async def server_create_command(ctx, server_name: str = None):
         await ctx.send(embed=embed)
         return
 
-    region = guild_settings[guild_id]
+    region = guild_settings[guild_id]["region"]
+    selected_game = guild_settings[guild_id]["game"]
     region_label = "🌐 Roblox Global" if region == "global" else "🇻🇳 Roblox VNG"
     
-    # Tạo Link Server Giả Lập / Mẫu theo khu vực đã cấu hình
-    mock_link = f"https://www.roblox.com/games/share?code={hash(server_name + str(user_id))}&type=Server&region={region}"
+    mock_link = f"https://www.roblox.com/games/share?code={hash(server_name + selected_game + str(user_id))}&type=Server&region={region}"
 
     # Lưu thông tin Server VIP
     if user_id not in user_servers:
         user_servers[user_id] = []
-    user_servers[user_id].append({"name": server_name, "link": mock_link})
+    user_servers[user_id].append({"name": server_name, "game": selected_game, "link": mock_link})
 
-    # Thử gửi liên kết vào DM của người dùng
+    # Gửi liên kết vào DM của người dùng
     try:
         dm_embed = discord.Embed(
             title="🎉 Server VIP Roblox Đã Được Tạo!",
-            description=f"Đây là Server VIP của bạn dành cho phiên bản **{region_label}**.",
+            description=f"Đây là Server VIP của bạn dành cho game **{selected_game}** ({region_label}).",
             color=discord.Color.purple()
         )
-        dm_embed.add_field(name="📛 Tên Server:", value=f"`{server_name}`", inline=False)
+        dm_embed.add_field(name="🎮 Game:", value=f"`{selected_game}`", inline=True)
+        dm_embed.add_field(name="📛 Tên Server:", value=f"`{server_name}`", inline=True)
         dm_embed.add_field(name="🔗 Link Server VIP:", value=f"[Nhấn vào đây để vào Server VIP]({mock_link})", inline=False)
         dm_embed.set_footer(text="Cảm ơn bạn đã sử dụng dịch vụ!")
         
@@ -244,16 +284,15 @@ async def server_create_command(ctx, server_name: str = None):
         # Báo lại ở channel công khai
         pub_embed = discord.Embed(
             title="✅ Tạo Server VIP Thành Công!",
-            description=f"Link Server VIP **{server_name}** ({region_label}) đã được gửi trực tiếp qua **Tin Nhắn Riêng (DM)** của bạn! 📩",
+            description=f"Link Server VIP **{server_name}** (Game: `{selected_game}`) đã được gửi trực tiếp qua **Tin Nhắn Riêng (DM)** của bạn! 📩",
             color=discord.Color.green()
         )
         await ctx.send(embed=pub_embed)
 
     except discord.Forbidden:
-        # Nếu người dùng khóa DM
         err_embed = discord.Embed(
             title="❌ Không Thể Gửi DM!",
-            description="Bot không thể gửi tin nhắn riêng cho bạn. Vui lòng mở khóa DM (Allow direct messages from server members) trong Cài đặt riêng tư của Discord và thử lại!",
+            description="Bot không thể gửi tin nhắn riêng cho bạn. Vui lòng mở khóa DM trong Cài đặt riêng tư của Discord và thử lại!",
             color=discord.Color.red()
         )
         await ctx.send(embed=err_embed)
@@ -270,7 +309,7 @@ async def server_delete_command(ctx, *, server_name: str = None):
         return
 
     if not server_name:
-        srv_list = "\n".join([f"• `{s['name']}`" for s in servers])
+        srv_list = "\n".join([f"• `{s['name']}` (Game: {s['game']})" for s in servers])
         embed = discord.Embed(
             title="⚠️ Thiếu Tên Server VIP",
             description=f"Vui lòng nhập tên Server VIP cần xóa theo cú pháp: `hx!server_delete <tên_server>`\n\n**Danh sách Server VIP của bạn:**\n{srv_list}",
@@ -279,7 +318,6 @@ async def server_delete_command(ctx, *, server_name: str = None):
         await ctx.send(embed=embed)
         return
 
-    # Lọc danh sách loại bỏ server được yêu cầu
     target_server = next((s for s in servers if s['name'] == server_name), None)
     
     if target_server:
@@ -311,12 +349,12 @@ async def help_command(ctx):
 
     embed.add_field(
         name="🛠️ **Nhóm Cấu Hình Server**",
-        value="`hx!setup` : Cấu hình vùng chơi Roblox (Global hoặc VNG) khi bot mới vào server.",
+        value="`hx!setup` : Cấu hình vùng chơi Roblox (Global hoặc VNG).\n`hx!game <tên_game>` : Chọn game Roblox muốn tạo server (Ví dụ: `hx!game steal an egg`).",
         inline=False
     )
     embed.add_field(
         name="👤 **Nhóm Tài Khoản**",
-        value="`hx!account_create` : Mở giao diện điền tên tài khoản Roblox.\n`hx!account_delete <tên_acc>` : Xóa tài khoản đã lưu khỏi hệ thống.",
+        value="`hx!account_create` : Mở giao diện điền tên tài khoản / ghi chú.\n`hx!account_delete <tên_acc>` : Xóa tài khoản đã lưu khỏi hệ thống.",
         inline=False
     )
     embed.add_field(
@@ -330,14 +368,13 @@ async def help_command(ctx):
         inline=False
     )
 
-    embed.set_footer(text="Lưu ý: Bạn phải tạo ít nhất 1 account trước khi tạo Server VIP!")
+    embed.set_footer(text="Lưu ý: Phải chạy hx!setup, hx!game và tạo ít nhất 1 account trước khi tạo Server VIP!")
     await ctx.send(embed=embed)
 
 # ------------------------------------------------------------------
 # 7. KÍCH HOẠT BOT
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    # Đặt Token Bot trong biến môi trường DISCORD_TOKEN trên Render
     TOKEN = os.environ.get("DISCORD_TOKEN")
     if TOKEN:
         bot.run(TOKEN)
